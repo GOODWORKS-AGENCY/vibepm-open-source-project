@@ -5,23 +5,131 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL") || "https://api.openai.com/v1/chat/completions";
-const MODEL = Deno.env.get("AI_MODEL") || "gpt-4o";
+// ===== PROVIDER DETECTION =====
 
-async function callAI(apiKey: string, systemPrompt: string, userPrompt: string) {
-  const response = await fetch(GATEWAY_URL, {
+type Provider = "anthropic" | "openai" | "gateway" | "lovable";
+
+interface ProviderConfig {
+  provider: Provider;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
+function detectProvider(): ProviderConfig {
+  const explicit = Deno.env.get("AI_PROVIDER")?.toLowerCase();
+  const apiKey = Deno.env.get("AI_API_KEY") || "";
+  const gatewayUrl = Deno.env.get("AI_GATEWAY_URL");
+  const customModel = Deno.env.get("AI_MODEL");
+  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+
+  // 1. Explicit provider override
+  if (explicit === "anthropic" || (!explicit && apiKey.startsWith("sk-ant-"))) {
+    return {
+      provider: "anthropic",
+      apiKey,
+      baseUrl: "https://api.anthropic.com/v1/messages",
+      model: customModel || "claude-sonnet-4-20250514",
+    };
+  }
+
+  if (explicit === "openai" || (!explicit && apiKey.startsWith("sk-") && apiKey)) {
+    return {
+      provider: "openai",
+      apiKey,
+      baseUrl: "https://api.openai.com/v1/chat/completions",
+      model: customModel || "gpt-4o-mini",
+    };
+  }
+
+  // 2. Custom gateway (OpenRouter, Groq, Ollama, etc.)
+  if (gatewayUrl && apiKey) {
+    return {
+      provider: "gateway",
+      apiKey,
+      baseUrl: gatewayUrl,
+      model: customModel || "gpt-4o-mini",
+    };
+  }
+
+  // 3. Fallback: Lovable AI Gateway
+  if (lovableKey) {
+    return {
+      provider: "lovable",
+      apiKey: lovableKey,
+      baseUrl: "https://ai.gateway.lovable.dev/v1/chat/completions",
+      model: customModel || "google/gemini-2.5-flash",
+    };
+  }
+
+  throw new Error(
+    "No AI provider configured. Set one of: AI_API_KEY (Anthropic or OpenAI key), AI_GATEWAY_URL + AI_API_KEY (custom gateway), or LOVABLE_API_KEY (auto-provisioned)."
+  );
+}
+
+// ===== ANTHROPIC CALLER =====
+
+async function callAnthropic(
+  config: ProviderConfig,
+  systemPrompt: string,
+  userPrompt: string
+) {
+  const response = await fetch(config.baseUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 8192,
+      system: systemPrompt + "\n\nIMPORTANT: Return your response as a valid JSON object. Do NOT wrap in markdown code blocks. Return ONLY the raw JSON.",
+      messages: [{ role: "user", content: userPrompt }],
+    }),
+  });
+
+  if (!response.ok) {
+    const status = response.status;
+    const body = await response.text();
+    if (status === 429) throw new Error("Anthropic rate limit exceeded. Please try again in a moment.");
+    if (status === 401) throw new Error("Invalid Anthropic API key. Check your AI_API_KEY secret.");
+    throw new Error(`Anthropic API error [${status}]: ${body}`);
+  }
+
+  const data = await response.json();
+  const content = data.content?.[0]?.text;
+
+  if (!content) {
+    console.error("No content in Anthropic response:", JSON.stringify(data).slice(0, 500));
+    throw new Error("Anthropic returned an empty response. Please try again.");
+  }
+
+  return content;
+}
+
+// ===== OPENAI-COMPATIBLE CALLER =====
+
+async function callOpenAI(
+  config: ProviderConfig,
+  systemPrompt: string,
+  userPrompt: string
+) {
+  const response = await fetch(config.baseUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: config.model,
       messages: [
-        { role: "system", content: systemPrompt + "\n\nIMPORTANT: Return your response as a valid JSON object. Do NOT wrap in markdown code blocks. Return ONLY the raw JSON." },
+        {
+          role: "system",
+          content: systemPrompt + "\n\nIMPORTANT: Return your response as a valid JSON object. Do NOT wrap in markdown code blocks. Return ONLY the raw JSON.",
+        },
         { role: "user", content: userPrompt },
       ],
-      response_format: { type: "json_object" },
     }),
   });
 
@@ -29,27 +137,45 @@ async function callAI(apiKey: string, systemPrompt: string, userPrompt: string) 
     const status = response.status;
     const body = await response.text();
     if (status === 429) throw new Error("Rate limit exceeded. Please try again in a moment.");
-    if (status === 401) throw new Error("Invalid AI API key. Check your AI_API_KEY secret.");
+    if (status === 401) throw new Error("Invalid API key. Check your AI_API_KEY secret.");
+    if (status === 402) throw new Error("Insufficient credits. Please check your AI provider account.");
     throw new Error(`AI gateway error [${status}]: ${body}`);
   }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
-  
+
   if (!content) {
-    console.error("No content in AI response:", JSON.stringify(data).slice(0, 500));
+    console.error("No content in OpenAI response:", JSON.stringify(data).slice(0, 500));
     throw new Error("AI returned an empty response. Please try again.");
   }
 
+  return content;
+}
+
+// ===== UNIFIED CALLER =====
+
+async function callAI(systemPrompt: string, userPrompt: string) {
+  const config = detectProvider();
+  console.log(`Using provider: ${config.provider}, model: ${config.model}`);
+
+  let content: string;
+
+  if (config.provider === "anthropic") {
+    content = await callAnthropic(config, systemPrompt, userPrompt);
+  } else {
+    content = await callOpenAI(config, systemPrompt, userPrompt);
+  }
+
   console.log("AI response length:", content.length);
-  
+
   // Strip markdown code blocks if present
   const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonStr = jsonMatch ? jsonMatch[1].trim() : content.trim();
-  
+
   try {
     const parsed = JSON.parse(jsonStr);
-    if (typeof parsed !== 'object' || parsed === null || Object.keys(parsed).length === 0) {
+    if (typeof parsed !== "object" || parsed === null || Object.keys(parsed).length === 0) {
       throw new Error("AI returned an empty JSON object. Please try again.");
     }
     return parsed;
@@ -81,7 +207,7 @@ RULES:
 - Phases should be realistic development milestones
 - Default tech stack: React + TypeScript + Vite + Supabase + shadcn/ui + TanStack Query + react-hook-form + zod
 
-Return the result via the return_result function with this structure:
+Return a JSON object with this structure:
 {
   "projectName": "string",
   "description": "string", 
@@ -121,12 +247,9 @@ RULES:
 - Generate 15-60 tasks depending on project complexity
 - An empty wat_references array means no knowledge file is needed (e.g., UI tweaks).
 
-Return via return_result: { "tasks": [...] }`;
+Return a JSON object: { "tasks": [...] }`;
 
-// NOTE: generate-knowledge and generate-config steps removed.
-// All knowledge files and config files are now generated deterministically
-// by local templates in src/lib/generate-from-templates.ts.
-// The edge function only handles: analyze (creative) and generate-tasks (creative).
+// ===== SERVER =====
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -134,11 +257,6 @@ serve(async (req) => {
   }
 
   try {
-    const AI_API_KEY = Deno.env.get("AI_API_KEY");
-    if (!AI_API_KEY) {
-      throw new Error("AI_API_KEY is not configured. Set it via: supabase secrets set AI_API_KEY=your-key");
-    }
-
     const { step, data } = await req.json();
 
     let result;
@@ -147,14 +265,14 @@ serve(async (req) => {
       case "analyze": {
         const { projectName, projectDesc, brainDump } = data;
         const userPrompt = `Project Name: ${projectName}\nDescription: ${projectDesc}\n\nBrain Dump:\n${brainDump}`;
-        result = await callAI(AI_API_KEY, ANALYZE_SYSTEM, userPrompt);
+        result = await callAI(ANALYZE_SYSTEM, userPrompt);
         break;
       }
 
       case "generate-tasks": {
         const { analysis } = data;
         const userPrompt = `Generate tasks for this project:\n\n${JSON.stringify(analysis, null, 2)}`;
-        result = await callAI(AI_API_KEY, GENERATE_TASKS_SYSTEM, userPrompt);
+        result = await callAI(GENERATE_TASKS_SYSTEM, userPrompt);
         break;
       }
 
@@ -168,8 +286,10 @@ serve(async (req) => {
   } catch (e) {
     console.error("generate-project error:", e);
     const errorMessage = e instanceof Error ? e.message : "Unknown error";
-    const status = errorMessage.includes("Rate limit") ? 429 
-      : errorMessage.includes("Invalid AI API key") ? 401 
+    const status = errorMessage.includes("Rate limit") ? 429
+      : errorMessage.includes("Invalid") ? 401
+      : errorMessage.includes("Insufficient credits") ? 402
+      : errorMessage.includes("No AI provider") ? 400
       : 500;
     return new Response(JSON.stringify({ error: errorMessage }), {
       status,
