@@ -1,107 +1,144 @@
 # VibePM
 
-AI-powered project scaffolding tool that takes a "brain dump" of project ideas, analyzes them via AI, and generates a complete development framework — tasks, knowledge files (WAT framework: Workflows, Agents, Tools), config files, CLAUDE.md templates, and database migrations. Output is exported as a ZIP.
+AI-powered project scaffolding for vibe coders. Paste a brain dump of your project idea, and VibePM generates a complete development framework — tasks, knowledge files (WAT: Workflows, Agents, Tools), database migrations, agent configs, and a gamified task tracker — all exported as a ready-to-go ZIP.
 
 ## Features
 
-- **AI Analysis**: Paste a brain dump → get structured project breakdown (entities, modules, phases)
-- **Task Generation**: Auto-generates prioritized, dependency-aware task lists
-- **WAT Framework**: Generates Workflows, Agents, and Tools knowledge files
-- **Export**: Download everything as a ZIP (migrations, edge functions, tracker UI, config files)
-- **Gamification**: XP and levels for task completion
-- **Real-time Tracker**: Live task board powered by Supabase Realtime
+- 🧠 **Brain Dump Wizard** — Paste messy project ideas, VibePM structures them into phases, modules, and entities
+- 📋 **AI Task Generation** — Automatically creates a prioritized task list with dependencies and XP rewards
+- 📚 **WAT Knowledge Files** — Generates Workflows, Agent specs, and Tool docs for your AI coding agents
+- 🤖 **Agent Task API** — REST endpoint for Claude Code / Codex to claim and complete tasks autonomously
+- 🎮 **Gamified Tracker** — XP, levels, progress rings — because shipping should feel like a game
+- 📦 **ZIP Export** — Download everything: migrations, edge functions, knowledge files, CLAUDE.md, AGENTS.md
 
-## Tech Stack
-
-- **Frontend**: React 18 + TypeScript + Vite
-- **UI**: shadcn/ui (Radix) + Tailwind CSS + Framer Motion
-- **Backend**: Supabase (auth, database, edge functions, realtime)
-- **AI**: Any OpenAI-compatible API (OpenAI, Anthropic, Google, etc.)
-
-## Prerequisites
-
-- Node.js 18+
-- A [Supabase](https://supabase.com) project (free tier works)
-- An AI API key (OpenAI, Anthropic, Google, or any OpenAI-compatible provider)
-- [Supabase CLI](https://supabase.com/docs/guides/cli) (for deploying edge functions)
-
-## Setup
-
-### 1. Clone and install
+## Quick Start
 
 ```bash
 git clone https://github.com/your-org/vibepm.git
 cd vibepm
 npm install
+npm run dev
 ```
 
-### 2. Configure environment
+Open [http://localhost:8080](http://localhost:8080). The app works fully offline with localStorage — no backend required for project creation and export.
+
+## Supabase Setup (Optional)
+
+Adding Supabase enables AI-powered analysis, the agent task API, and real-time progress tracking.
+
+### 1. Create a Supabase Project
+
+Go to [supabase.com/dashboard](https://supabase.com/dashboard) → **New Project**
+
+Note your **Project URL**, **anon key**, and **project ref** from Settings → API.
+
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your Supabase project credentials:
+Edit `.env`:
 
 ```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
-VITE_SUPABASE_PROJECT_ID=your-project-id
+VITE_SUPABASE_URL="https://your-project.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="your-anon-key"
+VITE_SUPABASE_PROJECT_ID="your-project-ref"
 ```
 
-### 3. Set up the database
-
-Run the migration in your Supabase SQL Editor (or via CLI):
+### 3. Run Migrations
 
 ```bash
+npm install -g supabase
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
 supabase db push
 ```
 
-### 4. Deploy edge functions
+### 4. Deploy Edge Functions
 
 ```bash
-supabase login
-supabase link --project-ref your-project-id
 supabase functions deploy generate-project
 supabase functions deploy agent-tasks
 ```
 
-### 5. Configure AI secrets
+### 5. Configure AI Provider
+
+Set your AI provider secrets. The edge function supports any OpenAI-compatible API:
 
 ```bash
-# Required: your AI provider API key
-supabase secrets set AI_API_KEY=your-api-key
-
-# Optional: custom gateway URL and model (defaults to OpenAI gpt-4o)
-supabase secrets set AI_GATEWAY_URL=https://api.openai.com/v1/chat/completions
-supabase secrets set AI_MODEL=gpt-4o
+# Required
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-### 6. Start development
+Then pick your AI provider:
+
+| Provider | Secrets to Set |
+|----------|---------------|
+| **OpenAI** (default) | `AI_API_KEY=sk-...` |
+| **Anthropic** (via LiteLLM) | `AI_API_KEY=sk-ant-...` `AI_GATEWAY_URL=https://your-proxy/v1/chat/completions` `AI_MODEL=claude-3-haiku-20240307` |
+| **Groq** | `AI_API_KEY=gsk_...` `AI_GATEWAY_URL=https://api.groq.com/openai/v1/chat/completions` `AI_MODEL=llama-3.1-70b-versatile` |
+| **Ollama** (local) | `AI_GATEWAY_URL=http://host.docker.internal:11434/v1/chat/completions` `AI_MODEL=llama3.1` |
+| **Any OpenAI-compatible** | `AI_API_KEY=...` `AI_GATEWAY_URL=https://...` `AI_MODEL=...` |
+
+**Defaults** (if not set): `AI_GATEWAY_URL=https://api.openai.com/v1/chat/completions`, `AI_MODEL=gpt-4o-mini`
+
+## Agent Integration
+
+Once Supabase is set up, your AI agents can autonomously work through tasks:
 
 ```bash
-npm run dev
+# Get next task
+curl -X POST $SUPABASE_URL/functions/v1/agent-tasks \
+  -H "Authorization: Bearer $JWT" \
+  -d '{"action": "next", "agent_id": "claude-code"}'
+
+# Claim → work → complete
+curl -X POST $SUPABASE_URL/functions/v1/agent-tasks \
+  -H "Authorization: Bearer $JWT" \
+  -d '{"action": "claim", "task_code": "P1-01", "agent_id": "claude-code"}'
+
+curl -X POST $SUPABASE_URL/functions/v1/agent-tasks \
+  -H "Authorization: Bearer $JWT" \
+  -d '{"action": "complete", "task_code": "P1-01", "notes": "Done"}'
 ```
 
-Open [http://localhost:8080](http://localhost:8080).
+## Tech Stack
 
-## Edge Function Environment Variables
+- **Frontend**: React 18 · TypeScript · Vite
+- **UI**: shadcn/ui · Tailwind CSS · Framer Motion
+- **State**: TanStack Query · localStorage
+- **Backend**: Supabase (Postgres + Edge Functions + Realtime)
+- **AI**: Any OpenAI-compatible provider
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `AI_API_KEY` | Yes | — | Your AI provider API key |
-| `AI_GATEWAY_URL` | No | `https://api.openai.com/v1/chat/completions` | OpenAI-compatible endpoint |
-| `AI_MODEL` | No | `gpt-4o` | Model identifier |
+## Project Structure
 
-## Scripts
+```
+src/
+├── pages/          # Route pages (wizard, dashboard, tracker)
+├── components/     # UI components
+├── templates/      # Output file generators (CLAUDE.md, AGENTS.md, etc.)
+├── hooks/          # React hooks (projects, tasks, auth)
+├── lib/            # Store, AI client, template engine
+└── types/          # TypeScript types
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start dev server (port 8080) |
-| `npm run build` | Production build |
-| `npm run test` | Run tests (vitest) |
-| `npm run lint` | ESLint |
+supabase/
+├── functions/
+│   ├── generate-project/   # AI analysis + task generation
+│   └── agent-tasks/        # Agent task API (claim/complete/status)
+└── migrations/             # Database schema
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Commit your changes (`git commit -m 'Add my feature'`)
+4. Push to the branch (`git push origin feat/my-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT
+[MIT](LICENSE)
