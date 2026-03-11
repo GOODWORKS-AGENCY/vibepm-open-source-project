@@ -64,24 +64,36 @@ supabase functions deploy agent-tasks
 
 ### 5. Configure AI Provider
 
-Set your AI provider secrets. The edge function supports any OpenAI-compatible API:
+The edge function auto-detects your AI provider from the API key format. Set your key and optionally override the model:
 
 ```bash
-# Required
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+supabase secrets set AI_API_KEY=your-key
+# Optional: supabase secrets set AI_MODEL=your-preferred-model
+# Optional: supabase secrets set AI_PROVIDER=anthropic|openai
 ```
 
-Then pick your AI provider:
+#### Provider Detection (automatic)
 
-| Provider | Secrets to Set |
-|----------|---------------|
-| **OpenAI** (default) | `AI_API_KEY=sk-...` |
-| **Anthropic** (via LiteLLM) | `AI_API_KEY=sk-ant-...` `AI_GATEWAY_URL=https://your-proxy/v1/chat/completions` `AI_MODEL=claude-3-haiku-20240307` |
-| **Groq** | `AI_API_KEY=gsk_...` `AI_GATEWAY_URL=https://api.groq.com/openai/v1/chat/completions` `AI_MODEL=llama-3.1-70b-versatile` |
-| **Ollama** (local) | `AI_GATEWAY_URL=http://host.docker.internal:11434/v1/chat/completions` `AI_MODEL=llama3.1` |
-| **Any OpenAI-compatible** | `AI_API_KEY=...` `AI_GATEWAY_URL=https://...` `AI_MODEL=...` |
+| Provider | Setup | Default Model |
+|----------|-------|---------------|
+| **Anthropic** (priority 1) | `AI_API_KEY=sk-ant-...` (auto-detected) | `claude-sonnet-4-20250514` |
+| **OpenAI** (priority 2) | `AI_API_KEY=sk-...` (auto-detected) | `gpt-4o-mini` |
+| **OpenRouter** | `AI_GATEWAY_URL=https://openrouter.ai/api/v1/chat/completions` `AI_API_KEY=sk-or-...` | `gpt-4o-mini` |
+| **Groq** | `AI_GATEWAY_URL=https://api.groq.com/openai/v1/chat/completions` `AI_API_KEY=gsk_...` | `gpt-4o-mini` |
+| **Ollama** (local) | `AI_GATEWAY_URL=http://host.docker.internal:11434/v1/chat/completions` | `llama3.1` |
+| **Any OpenAI-compatible** | `AI_GATEWAY_URL=https://...` `AI_API_KEY=...` `AI_MODEL=...` | — |
+| **No key** (fallback) | Works out of the box on Lovable | `google/gemini-2.5-flash` |
 
-**Defaults** (if not set): `AI_GATEWAY_URL=https://api.openai.com/v1/chat/completions`, `AI_MODEL=gpt-4o-mini`
+#### Explicit override
+
+Force a specific provider with `AI_PROVIDER`:
+
+```bash
+supabase secrets set AI_PROVIDER=anthropic AI_API_KEY=sk-ant-...
+supabase secrets set AI_PROVIDER=openai AI_API_KEY=sk-...
+```
+
+**Anthropic is natively supported** — no proxy or format translation needed. The edge function sends Anthropic's native Messages API format automatically.
 
 ## Agent Integration
 
