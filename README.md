@@ -20,11 +20,9 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:8080](http://localhost:8080). The app works fully offline with localStorage — no backend required for project creation and export.
-
 ## Supabase Setup (Optional)
 
-Adding Supabase enables AI-powered analysis, the agent task API, and real-time progress tracking.
+Adding Supabase enables AI-powered analysis, the agent task API, and real-time progress tracking. 
 
 ### 1. Create a Supabase Project
 
